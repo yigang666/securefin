@@ -1060,3 +1060,548 @@ tr:last-child td{border-bottom:none}tr:hover td{background:rgba(255,255,255,.02)
   </div>
 </section>
 
+
+<!-- ═══════════════════════════════════════════════════════════
+     METRICS
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="metrics">
+  <div class="section-header">
+    <div class="section-icon ic-orange">📊</div>
+    <div><div class="section-title">Prometheus Metrics</div><div class="section-subtitle">Custom business + runtime instrumentation</div></div>
+  </div>
+  <p>SecureFin exposes a <code>/metrics</code> endpoint in Prometheus text format via <code>prom-client</code>. Three metric families are collected:</p>
+  <div class="card-grid-3">
+    <div class="card">
+      <h3 style="margin-top:0">securefin_node_*</h3>
+      <p style="font-size:13px;color:var(--muted)">Default Node.js runtime metrics — heap usage, event-loop lag, GC pause, active handles. Collected automatically by <code>collectDefaultMetrics()</code>.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">securefin_transactions_total</h3>
+      <p style="font-size:13px;color:var(--muted)">Counter labelled <code>currency</code>. Incremented on every successful <code>POST /transactions</code>. Tracks volume per currency over time.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">securefin_http_request_duration_seconds</h3>
+      <p style="font-size:13px;color:var(--muted)">Histogram labelled <code>method, path, status</code>. Buckets: 1 ms → 1 s. Drives p50/p95/p99 latency panels in Grafana.</p>
+    </div>
+  </div>
+  <pre><code>// app/metrics.js
+const transactionCounter = new promClient.Counter({
+  name: 'securefin_transactions_total',
+  labelNames: ['currency'],
+});
+
+const httpRequestDuration = new promClient.Histogram({
+  name: 'securefin_http_request_duration_seconds',
+  labelNames: ['method', 'path', 'status'],
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+});</code></pre>
+  <div class="callout call-blue">
+    <span class="callout-icon">ℹ️</span>
+    <span>The <code>/metrics</code> endpoint is excluded from HTTP duration tracking to avoid self-instrumentation noise. Prometheus scrapes every 15 s (local) or via ServiceMonitor in Kubernetes.</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LOGGING
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="logging">
+  <div class="section-header">
+    <div class="section-icon ic-yellow">📝</div>
+    <div><div class="section-title">Structured Logging</div><div class="section-subtitle">JSON logs via pino — ready for log aggregators</div></div>
+  </div>
+  <p>All logs are emitted as structured JSON using <strong>pino</strong>. In non-production environments <code>pino-pretty</code> formats output for human readability.</p>
+  <div class="card-grid">
+    <div class="card">
+      <h3 style="margin-top:0">Log Fields (every line)</h3>
+      <table style="margin:0">
+        <thead><tr><th>Field</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td><code>service</code></td><td><code>securefin</code></td></tr>
+          <tr><td><code>version</code></td><td>from <code>package.json</code></td></tr>
+          <tr><td><code>env</code></td><td><code>NODE_ENV</code></td></tr>
+          <tr><td><code>level</code></td><td>info / debug / warn / error</td></tr>
+          <tr><td><code>time</code></td><td>ISO timestamp</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Log Level by Environment</h3>
+      <table style="margin:0">
+        <thead><tr><th>Env</th><th>Level</th><th>Format</th></tr></thead>
+        <tbody>
+          <tr><td><code>dev</code></td><td>debug</td><td>pino-pretty</td></tr>
+          <tr><td><code>staging</code></td><td>info</td><td>JSON</td></tr>
+          <tr><td><code>prod</code></td><td>info</td><td>JSON</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:var(--muted);margin-top:10px">Set via <code>LOG_LEVEL</code> env var in Helm values.</p>
+    </div>
+  </div>
+  <pre><code>// Sample production log line
+{"level":"info","time":"2026-03-17T01:00:00.000Z",
+ "service":"securefin","version":"1.2.0","env":"production",
+ "method":"POST","path":"/transactions","status":201,"duration":4}</code></pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     GRAFANA
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="grafana">
+  <div class="section-header">
+    <div class="section-icon ic-green">📈</div>
+    <div><div class="section-title">Grafana Dashboard</div><div class="section-subtitle">Pre-provisioned observability panels</div></div>
+  </div>
+  <p>Dashboard JSON is provisioned via ConfigMap (<code>helm/templates/configmap-dashboard.yaml</code>) and auto-loaded by Grafana on startup — no manual import required.</p>
+  <div class="card-grid">
+    <div class="card">
+      <h3 style="margin-top:0">Panels</h3>
+      <ul style="font-size:13px">
+        <li><strong>Request Rate</strong> — <code>rate(securefin_http_request_duration_seconds_count[1m])</code></li>
+        <li><strong>p95 Latency</strong> — <code>histogram_quantile(0.95, rate(...))</code></li>
+        <li><strong>Error Rate</strong> — 5xx requests</li>
+        <li><strong>Transaction Volume</strong> — by currency</li>
+        <li><strong>Heap Used</strong> — <code>securefin_node_heap_used_bytes</code></li>
+        <li><strong>Event Loop Lag</strong> — p99 delay</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Scrape Pipeline</h3>
+      <div class="flow-row" style="flex-direction:column;align-items:flex-start;gap:8px;margin-top:8px">
+        <div class="flow-row">
+          <span class="flow-box fb-orange">App /metrics</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-box fb-orange">Prometheus</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-box fb-green">Grafana</span>
+        </div>
+        <div class="flow-row">
+          <span class="flow-box fb-blue">ServiceMonitor</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-box fb-blue">kube-prometheus-stack</span>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:10px">Local dev: <code>docker-compose up</code> starts the full observability stack.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     TERRAFORM
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="terraform">
+  <div class="section-header">
+    <div class="section-icon ic-yellow">🏗️</div>
+    <div><div class="section-title">Terraform IaC</div><div class="section-subtitle">Namespaces, RBAC, and quotas managed as code</div></div>
+  </div>
+  <p>The <code>terraform/</code> directory provisions the Kubernetes infrastructure. Remote state is stored in S3 (configurable backend).</p>
+  <div class="card-grid">
+    <div class="card">
+      <h3 style="margin-top:0">Files</h3>
+      <table style="margin:0;font-size:13px">
+        <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>main.tf</code></td><td>Provider config, S3 backend</td></tr>
+          <tr><td><code>variables.tf</code></td><td>Input variables</td></tr>
+          <tr><td><code>namespaces.tf</code></td><td>3 namespaces + image pull secret</td></tr>
+          <tr><td><code>rbac.tf</code></td><td>CI/CD SA + Role + RoleBinding</td></tr>
+          <tr><td><code>quotas.tf</code></td><td>ResourceQuota + LimitRange</td></tr>
+          <tr><td><code>outputs.tf</code></td><td>Namespace + SA names</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Quick Start</h3>
+      <pre style="margin:0;font-size:12px"><code>terraform init
+terraform plan \
+  -var='environments=["dev","staging","prod"]'
+terraform apply -auto-approve
+
+# or via Makefile
+make tf-plan
+make tf-apply</code></pre>
+      <div class="callout call-yellow" style="margin-top:12px">
+        <span class="callout-icon">⚠️</span>
+        <span style="font-size:12px">Replace <code>your-terraform-state-bucket</code> in <code>main.tf</code> before running <code>terraform init</code>.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     RBAC & QUOTAS
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="rbac-quotas">
+  <div class="section-header">
+    <div class="section-icon ic-red">🔑</div>
+    <div><div class="section-title">RBAC &amp; Resource Quotas</div><div class="section-subtitle">Least-privilege access and resource governance</div></div>
+  </div>
+  <div class="card-grid">
+    <div class="card">
+      <h3 style="margin-top:0">RBAC Model</h3>
+      <p style="font-size:13px;color:var(--muted)">Each namespace gets a <code>cicd-deployer</code> ServiceAccount bound to a <code>securefin-deployer</code> Role. The Role grants only verbs needed for Helm — no cluster-wide permissions.</p>
+      <div class="flow-row" style="margin-top:10px">
+        <span class="flow-box fb-blue" style="font-size:12px">SA: cicd-deployer</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-box fb-purple" style="font-size:12px">RoleBinding</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-box fb-orange" style="font-size:12px">Role: deployer</span>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Resource Quotas per Env</h3>
+      <table style="margin:0;font-size:12px">
+        <thead><tr><th>Env</th><th>CPU req</th><th>Mem req</th><th>Max pods</th></tr></thead>
+        <tbody>
+          <tr><td><code>dev</code></td><td>500m</td><td>512Mi</td><td>5</td></tr>
+          <tr><td><code>staging</code></td><td>1</td><td>1Gi</td><td>10</td></tr>
+          <tr><td><code>prod</code></td><td>4</td><td>4Gi</td><td>20</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:var(--muted);margin-top:8px">LimitRange enforces default requests/limits on containers that omit them.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SYSTEM DIAGRAM
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="system-diagram">
+  <div class="section-header">
+    <div class="section-icon ic-blue">🗺️</div>
+    <div><div class="section-title">System Architecture Diagram</div><div class="section-subtitle">End-to-end component view</div></div>
+  </div>
+  <div class="svg-wrap" style="padding:32px">
+    <svg viewBox="0 0 820 420" xmlns="http://www.w3.org/2000/svg" style="width:100%;font-family:-apple-system,sans-serif">
+      <defs>
+        <marker id="sd-arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/></marker>
+        <marker id="sd-arr-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#58a6ff"/></marker>
+        <marker id="sd-arr-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#bc8cff"/></marker>
+        <marker id="sd-arr-yellow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#d29922"/></marker>
+        <marker id="sd-arr-orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ffa657"/></marker>
+      </defs>
+      <!-- Developer -->
+      <rect x="20" y="170" width="100" height="50" rx="8" fill="#21262d" stroke="#30363d"/>
+      <text x="70" y="191" text-anchor="middle" font-size="12" font-weight="bold" fill="#e6edf3">Developer</text>
+      <text x="70" y="208" text-anchor="middle" font-size="10" fill="#8b949e">git push</text>
+      <!-- GitHub -->
+      <rect x="165" y="150" width="115" height="90" rx="8" fill="#21262d" stroke="#58a6ff"/>
+      <text x="222" y="175" text-anchor="middle" font-size="13" font-weight="bold" fill="#58a6ff">GitHub</text>
+      <text x="222" y="193" text-anchor="middle" font-size="10" fill="#8b949e">Actions CI/CD</text>
+      <text x="222" y="209" text-anchor="middle" font-size="10" fill="#8b949e">GHCR Registry</text>
+      <text x="222" y="225" text-anchor="middle" font-size="10" fill="#8b949e">Branch protection</text>
+      <!-- ArgoCD -->
+      <rect x="335" y="150" width="115" height="90" rx="8" fill="#21262d" stroke="#bc8cff"/>
+      <text x="392" y="175" text-anchor="middle" font-size="13" font-weight="bold" fill="#bc8cff">ArgoCD</text>
+      <text x="392" y="193" text-anchor="middle" font-size="10" fill="#8b949e">Watches Git</text>
+      <text x="392" y="209" text-anchor="middle" font-size="10" fill="#8b949e">Reconciles K8s</text>
+      <text x="392" y="225" text-anchor="middle" font-size="10" fill="#8b949e">Manual gate (prod)</text>
+      <!-- K8s Cluster box -->
+      <rect x="505" y="80" width="170" height="260" rx="8" fill="#161b22" stroke="#30363d" stroke-dasharray="6,3"/>
+      <text x="590" y="104" text-anchor="middle" font-size="11" font-weight="bold" fill="#8b949e">Kubernetes Cluster</text>
+      <!-- dev -->
+      <rect x="520" y="115" width="140" height="50" rx="6" fill="#21262d" stroke="#3fb950"/>
+      <text x="590" y="137" text-anchor="middle" font-size="12" font-weight="bold" fill="#3fb950">securefin-dev</text>
+      <text x="590" y="153" text-anchor="middle" font-size="10" fill="#8b949e">1 pod · DEBUG logs</text>
+      <!-- staging -->
+      <rect x="520" y="177" width="140" height="50" rx="6" fill="#21262d" stroke="#d29922"/>
+      <text x="590" y="199" text-anchor="middle" font-size="12" font-weight="bold" fill="#d29922">securefin-staging</text>
+      <text x="590" y="215" text-anchor="middle" font-size="10" fill="#8b949e">2–5 pods · HPA</text>
+      <!-- prod -->
+      <rect x="520" y="239" width="140" height="50" rx="6" fill="#21262d" stroke="#f85149"/>
+      <text x="590" y="261" text-anchor="middle" font-size="12" font-weight="bold" fill="#f85149">securefin-prod</text>
+      <text x="590" y="277" text-anchor="middle" font-size="10" fill="#8b949e">2–10 pods · PDB</text>
+      <!-- Observability -->
+      <rect x="520" y="305" width="140" height="24" rx="6" fill="#21262d" stroke="#ffa657"/>
+      <text x="590" y="321" text-anchor="middle" font-size="10" fill="#ffa657">Prometheus + Grafana</text>
+      <!-- Terraform -->
+      <rect x="165" y="300" width="115" height="50" rx="8" fill="#21262d" stroke="#d29922"/>
+      <text x="222" y="321" text-anchor="middle" font-size="13" font-weight="bold" fill="#d29922">Terraform</text>
+      <text x="222" y="337" text-anchor="middle" font-size="10" fill="#8b949e">Namespaces · RBAC</text>
+      <!-- Arrows -->
+      <line x1="120" y1="195" x2="163" y2="195" stroke="#8b949e" stroke-width="1.5" marker-end="url(#sd-arr)"/>
+      <line x1="280" y1="195" x2="333" y2="195" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#sd-arr-blue)"/>
+      <line x1="450" y1="195" x2="503" y2="195" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#sd-arr-purple)"/>
+      <line x1="280" y1="325" x2="503" y2="295" stroke="#d29922" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#sd-arr-yellow)"/>
+      <line x1="590" y1="289" x2="590" y2="303" stroke="#ffa657" stroke-width="1.5" marker-end="url(#sd-arr-orange)"/>
+      <!-- Labels -->
+      <text x="140" y="188" text-anchor="middle" font-size="9" fill="#8b949e">push</text>
+      <text x="305" y="188" text-anchor="middle" font-size="9" fill="#58a6ff">image push</text>
+      <text x="474" y="188" text-anchor="middle" font-size="9" fill="#bc8cff">sync</text>
+      <text x="395" y="312" text-anchor="middle" font-size="9" fill="#d29922">provisions</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     FILE INTERACTIONS
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="file-interactions">
+  <div class="section-header">
+    <div class="section-icon ic-purple">🔗</div>
+    <div><div class="section-title">File Interactions</div><div class="section-subtitle">How every file connects to every other file</div></div>
+  </div>
+  <table>
+    <thead><tr><th>File</th><th>Reads / Uses</th><th>Written by</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/server.js</code></td><td><code>metrics.js</code>, <code>logger.js</code></td><td>Developer</td></tr>
+      <tr><td><code>app/metrics.js</code></td><td><code>prom-client</code> npm pkg</td><td>Developer</td></tr>
+      <tr><td><code>app/logger.js</code></td><td><code>pino</code> npm pkg</td><td>Developer</td></tr>
+      <tr><td><code>Dockerfile</code></td><td><code>app/</code> directory</td><td>Developer</td></tr>
+      <tr><td><code>.github/workflows/ci-cd.yml</code></td><td>Dockerfile, Helm values, Makefile</td><td>Developer / Claude</td></tr>
+      <tr><td><code>helm/templates/*.yaml</code></td><td><code>helm/values*.yaml</code></td><td>Developer</td></tr>
+      <tr><td><code>gitops/applicationset.yaml</code></td><td><code>helm/</code> directory via Git</td><td>Developer</td></tr>
+      <tr><td><code>terraform/</code></td><td>Kubernetes API, Helm releases</td><td>Terraform CLI</td></tr>
+      <tr><td><code>monitoring/prometheus.yml</code></td><td><code>api:3000/metrics</code></td><td>Developer</td></tr>
+      <tr><td><code>helm/templates/configmap-dashboard.yaml</code></td><td>Grafana sidecar</td><td>Developer</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     REQUEST FLOW
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="request-flow">
+  <div class="section-header">
+    <div class="section-icon ic-green">→</div>
+    <div><div class="section-title">Request Flow</div><div class="section-subtitle">Trace a POST /transactions end-to-end</div></div>
+  </div>
+  <div class="pipeline-cards">
+    <div class="pipeline-card pc-blue">
+      <div class="pc-num">1</div><div class="pc-icon">🌐</div>
+      <div class="pc-title">Ingress</div>
+      <ul class="pc-items"><li>nginx ingress</li><li>TLS termination</li><li>Routes to Service</li></ul>
+    </div>
+    <div class="pipeline-card pc-yellow">
+      <div class="pc-num">2</div><div class="pc-icon">⚖️</div>
+      <div class="pc-title">Service</div>
+      <ul class="pc-items"><li>ClusterIP:3000</li><li>Load balances pods</li><li>NetworkPolicy check</li></ul>
+    </div>
+    <div class="pipeline-card pc-orange">
+      <div class="pc-num">3</div><div class="pc-icon">📦</div>
+      <div class="pc-title">Pod / Express</div>
+      <ul class="pc-items"><li>Validate body</li><li>Append to store</li><li>Return 201</li></ul>
+    </div>
+    <div class="pipeline-card pc-green">
+      <div class="pc-num">4</div><div class="pc-icon">📊</div>
+      <div class="pc-title">Instrument</div>
+      <ul class="pc-items"><li>Counter++</li><li>Histogram observe</li><li>pino log line</li></ul>
+    </div>
+  </div>
+  <div class="callout call-green">
+    <span class="callout-icon">⚡</span>
+    <span>Full request lifecycle — validation, store write, metrics increment, log emit — completes in &lt;5 ms on typical hardware (in-memory store, no I/O).</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SEMANTIC RELEASE
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="semantic-release">
+  <div class="section-header">
+    <div class="section-icon ic-green">🏷️</div>
+    <div><div class="section-title">Semantic Release</div><div class="section-subtitle">Automated versioning from conventional commits</div></div>
+  </div>
+  <p>Merging to <code>main</code> triggers <strong>semantic-release</strong>, which reads commit messages to determine the version bump, generates a changelog, and creates a GitHub release with the SBOM attached.</p>
+  <div class="card-grid">
+    <div class="card">
+      <h3 style="margin-top:0">Commit → Version Bump</h3>
+      <table style="margin:0;font-size:13px">
+        <thead><tr><th>Commit prefix</th><th>Bump</th></tr></thead>
+        <tbody>
+          <tr><td><code>fix:</code></td><td>patch — 1.0.<strong>1</strong></td></tr>
+          <tr><td><code>feat:</code></td><td>minor — 1.<strong>1</strong>.0</td></tr>
+          <tr><td><code>feat!:</code> / BREAKING CHANGE</td><td>major — <strong>2</strong>.0.0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Plugin Chain</h3>
+      <ol style="font-size:13px;color:var(--muted)">
+        <li>commit-analyzer — determine bump</li>
+        <li>release-notes-generator — write notes</li>
+        <li>changelog — update CHANGELOG.md</li>
+        <li>exec — write version to <code>app/.version</code></li>
+        <li>github — create release + attach SBOM</li>
+        <li>git — commit CHANGELOG.md back</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     ARCHITECTURE DECISIONS
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="adr">
+  <div class="section-header">
+    <div class="section-icon ic-purple">📋</div>
+    <div><div class="section-title">Architecture Decisions</div><div class="section-subtitle">ADR 001–003: rationale behind key choices</div></div>
+  </div>
+  <div class="adr-grid">
+    <div class="adr-card">
+      <div class="adr-num">ADR 001</div>
+      <div class="adr-title">In-Memory Transaction Store</div>
+      <span class="adr-status adr-accepted">Accepted</span>
+      <div class="adr-section"><strong>Context</strong>MVP needs zero external dependencies for fast iteration.</div>
+      <div class="adr-section"><strong>Decision</strong>Node.js array as the in-process data store.</div>
+      <div class="adr-section"><strong>Trade-off</strong>Data lost on restart; not horizontally scalable. Migration: swap for PostgreSQL behind repository pattern — API surface unchanged.</div>
+    </div>
+    <div class="adr-card">
+      <div class="adr-num">ADR 002</div>
+      <div class="adr-title">Helm over Kustomize</div>
+      <span class="adr-status adr-accepted">Accepted</span>
+      <div class="adr-section"><strong>Context</strong>Need to manage K8s manifests across 3 environments without YAML duplication.</div>
+      <div class="adr-section"><strong>Decision</strong>Helm 3 with one base chart + per-env values files.</div>
+      <div class="adr-section"><strong>Trade-off</strong>Go template learning curve, but wins on parametric power and native ArgoCD support.</div>
+    </div>
+    <div class="adr-card">
+      <div class="adr-num">ADR 003</div>
+      <div class="adr-title">Push CI + Pull GitOps</div>
+      <span class="adr-status adr-accepted">Accepted</span>
+      <div class="adr-section"><strong>Context</strong>Two dominant deploy models: push-based (CI runs helm) vs pull-based (ArgoCD watches Git).</div>
+      <div class="adr-section"><strong>Decision</strong>Both: GitHub Actions builds the image (push); ArgoCD deploys (pull).</div>
+      <div class="adr-section"><strong>Trade-off</strong>More moving parts, but gains drift detection, audit trail, and manual gate for production.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     ALL FILES EXPLAINED
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="all-files">
+  <div class="section-header">
+    <div class="section-icon ic-blue">📁</div>
+    <div><div class="section-title">Every File Explained</div><div class="section-subtitle">What each file does and why it exists</div></div>
+  </div>
+  <table>
+    <thead><tr><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/server.js</code></td><td>Express app — POST/GET /transactions, /health, /metrics</td></tr>
+      <tr><td><code>app/metrics.js</code></td><td>Prometheus counters and histograms</td></tr>
+      <tr><td><code>app/logger.js</code></td><td>pino structured JSON logger with per-env pretty-printing</td></tr>
+      <tr><td><code>app/server.test.js</code></td><td>Jest integration tests for all HTTP endpoints</td></tr>
+      <tr><td><code>app/package.json</code></td><td>Node.js deps, scripts, semantic-release version</td></tr>
+      <tr><td><code>Dockerfile</code></td><td>Multi-stage hardened image — non-root, read-only FS</td></tr>
+      <tr><td><code>docker-compose.yml</code></td><td>Local dev stack — API + Prometheus + Grafana</td></tr>
+      <tr><td><code>helm/Chart.yaml</code></td><td>Chart metadata</td></tr>
+      <tr><td><code>helm/values.yaml</code></td><td>Production defaults</td></tr>
+      <tr><td><code>helm/values-dev.yaml</code></td><td>Dev overrides — 1 replica, no TLS, debug logs</td></tr>
+      <tr><td><code>helm/values-staging.yaml</code></td><td>Staging overrides — 2 replicas, TLS, HPA 2–5</td></tr>
+      <tr><td><code>helm/templates/deployment.yaml</code></td><td>K8s Deployment — probes, securityContext, resource limits</td></tr>
+      <tr><td><code>helm/templates/hpa.yaml</code></td><td>HorizontalPodAutoscaler — CPU-based scaling</td></tr>
+      <tr><td><code>helm/templates/pdb.yaml</code></td><td>PodDisruptionBudget — minAvailable=1</td></tr>
+      <tr><td><code>helm/templates/networkpolicy.yaml</code></td><td>Deny-all ingress except ingress-nginx and Prometheus</td></tr>
+      <tr><td><code>helm/templates/serviceaccount.yaml</code></td><td>ServiceAccount — automountToken: false</td></tr>
+      <tr><td><code>helm/templates/servicemonitor.yaml</code></td><td>Prometheus ServiceMonitor — scrape /metrics</td></tr>
+      <tr><td><code>helm/templates/configmap-dashboard.yaml</code></td><td>Grafana dashboard JSON via ConfigMap</td></tr>
+      <tr><td><code>.github/workflows/ci-cd.yml</code></td><td>4-stage pipeline: test → build → deploy-dev → staging → prod</td></tr>
+      <tr><td><code>.github/pull_request_template.md</code></td><td>PR checklist</td></tr>
+      <tr><td><code>gitops/applicationset.yaml</code></td><td>ArgoCD ApplicationSet for all three environments</td></tr>
+      <tr><td><code>terraform/main.tf</code></td><td>Provider config + S3 backend</td></tr>
+      <tr><td><code>terraform/namespaces.tf</code></td><td>Three namespaces + GHCR pull secret</td></tr>
+      <tr><td><code>terraform/rbac.tf</code></td><td>CI/CD SA, Role, RoleBinding</td></tr>
+      <tr><td><code>terraform/quotas.tf</code></td><td>ResourceQuota + LimitRange per namespace</td></tr>
+      <tr><td><code>monitoring/prometheus.yml</code></td><td>Local Prometheus scrape config</td></tr>
+      <tr><td><code>.pre-commit-config.yaml</code></td><td>Pre-commit hooks — gitleaks, helm lint, whitespace</td></tr>
+      <tr><td><code>.releaserc.json</code></td><td>semantic-release plugin chain</td></tr>
+      <tr><td><code>Makefile</code></td><td>Convenience targets: build, test, lint, deploy, tf-*</td></tr>
+      <tr><td><code>SECURITY.md</code></td><td>Vulnerability reporting policy</td></tr>
+      <tr><td><code>CONTRIBUTING.md</code></td><td>Contribution guide — commit convention, PR process</td></tr>
+      <tr><td><code>docs/adr/</code></td><td>Architecture Decision Records 001–003</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     CLAUDE MEMORY / AI DEVOPS
+════════════════════════════════════════════════════════════ -->
+<section class="section" id="claude-memory">
+  <div class="section-header">
+    <div class="section-icon ic-purple">🤖</div>
+    <div><div class="section-title">AI DevOps Workflow</div><div class="section-subtitle">How Claude Code was used to build this project</div></div>
+  </div>
+  <p>This entire project — from initial scaffold to full DevOps hardening — was built collaboratively with <strong>Claude Code</strong> (Anthropic's CLI agent) acting as the primary development agent.</p>
+  <div class="memory-grid">
+    <div class="memory-card">
+      <div class="mc-title">.claude/state/current.md</div>
+      <div class="mc-desc">Active task state — current step, last action, next action, blockers. Persists across sessions so work can resume without repeating steps.</div>
+    </div>
+    <div class="memory-card">
+      <div class="mc-title">.claude/architecture/overview.md</div>
+      <div class="mc-desc">System design context — module map, key decisions, external dependencies. Loaded at session start for architectural awareness.</div>
+    </div>
+    <div class="memory-card">
+      <div class="mc-title">.claude/checkpoints/*.md</div>
+      <div class="mc-desc">Milestone snapshots — completed work, current state, next planned step. Created at session boundaries and before risky refactors.</div>
+    </div>
+  </div>
+  <div class="card-grid">
+    <div class="card">
+      <h3 style="margin-top:0">Phase 1 — Core Scaffold</h3>
+      <ul style="font-size:13px;color:var(--muted)">
+        <li>Express app with POST/GET /transactions</li>
+        <li>Dockerfile (multi-stage, non-root)</li>
+        <li>Helm chart with 3 env values files</li>
+        <li>GitHub Actions CI/CD pipeline</li>
+        <li>dev / staging / main branches</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Phase 2 — Hardening</h3>
+      <ul style="font-size:13px;color:var(--muted)">
+        <li>Prometheus metrics + Grafana dashboard</li>
+        <li>HPA, PDB, NetworkPolicy, ServiceMonitor</li>
+        <li>ArgoCD GitOps ApplicationSet</li>
+        <li>Terraform IaC (namespaces, RBAC, quotas)</li>
+        <li>semantic-release + pre-commit hooks + ADRs</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout call-blue">
+    <span class="callout-icon">💡</span>
+    <span>The <code>.claude/</code> directory is intentionally committed to the repo as a transparent record of the AI-assisted development process — state files, architecture notes, and checkpoints are all human-readable markdown.</span>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+(function () {
+  // Sidebar active-link scroll spy using IntersectionObserver
+  var links = Array.from(document.querySelectorAll('.nav-link'));
+  var sectionIds = links.map(function (l) { return l.getAttribute('href').slice(1); });
+  var sections = sectionIds.map(function (id) { return document.getElementById(id); }).filter(Boolean);
+
+  function setActive(id) {
+    links.forEach(function (l) {
+      l.classList.toggle('active', l.getAttribute('href') === '#' + id);
+    });
+  }
+
+  if (!('IntersectionObserver' in window)) {
+    if (links[0]) links[0].classList.add('active');
+    return;
+  }
+
+  // Track which sections are currently intersecting
+  var visible = {};
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
+    // Activate the first visible section in document order
+    for (var i = 0; i < sections.length; i++) {
+      if (visible[sections[i].id]) { setActive(sections[i].id); return; }
+    }
+  }, { rootMargin: '-10% 0px -60% 0px', threshold: 0 });
+
+  sections.forEach(function (s) { observer.observe(s); });
+
+  // Also handle direct hash navigation
+  window.addEventListener('hashchange', function () {
+    var id = location.hash.slice(1);
+    if (id) setActive(id);
+  });
+  if (location.hash) setActive(location.hash.slice(1));
+})();
+</script>
+</body>
+</html>
