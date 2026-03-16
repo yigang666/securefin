@@ -1,0 +1,12 @@
+# Chart.yaml — Helm chart metadata
+# This file identifies the chart and its version to Helm.
+apiVersion: v2
+name: securefin
+description: SecureFin transaction recording service — Kubernetes Helm chart
+type: application
+
+# Chart version — bump this when you change the chart templates or values.
+version: 0.1.0
+
+# App version — should match the Docker image tag being deployed.
+appVersion: "1.0.0"

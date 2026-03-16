@@ -1,0 +1,54 @@
+# values.yaml — default (production) Helm values
+# Environment-specific files (values-dev.yaml, values-staging.yaml) override
+# individual keys here without repeating unchanged defaults.
+
+# ── Image ─────────────────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/your-org/securefin   # Docker image registry path
+  tag: "latest"                              # overridden per environment / git SHA
+  pullPolicy: IfNotPresent                   # avoid unnecessary pulls for stable tags
+
+# ── Replica count ─────────────────────────────────────────────────────────────
+replicaCount: 3   # production: run 3 replicas for HA
+
+# ── Service ───────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP   # traffic is routed via Ingress; no direct LoadBalancer needed
+  port: 80          # service port exposed inside the cluster
+  targetPort: 3000  # container port where the Node.js app listens
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: "nginx"   # Ingress controller class (nginx, traefik, etc.)
+  host: "securefin.example.com"   # production hostname — replace with real domain
+  tls:
+    enabled: true
+    secretName: "securefin-tls"   # TLS secret managed by cert-manager or manually
+
+# ── Resource limits ───────────────────────────────────────────────────────────
+# Production: tighter limits to prevent noisy-neighbour issues.
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+# ── Environment variables passed to the container ─────────────────────────────
+env:
+  PORT: "3000"
+  NODE_ENV: "production"
+
+# ── Liveness & readiness probes ───────────────────────────────────────────────
+# Kubernetes uses these to know when to restart a pod or route traffic to it.
+livenessProbe:
+  path: /health
+  initialDelaySeconds: 10
+  periodSeconds: 15
+
+readinessProbe:
+  path: /health
+  initialDelaySeconds: 5
+  periodSeconds: 10

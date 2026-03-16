@@ -1,0 +1,26 @@
+# values-staging.yaml — staging (pre-production) environment overrides
+# Apply with: helm upgrade --install securefin ./helm -f helm/values-staging.yaml
+# Staging mirrors production config as closely as possible to catch issues early.
+
+replicaCount: 2   # one fewer than prod to save cost, still tests multi-replica behaviour
+
+image:
+  tag: "staging-latest"   # built from the staging branch / release candidate
+
+ingress:
+  host: "securefin-staging.example.com"   # staging-specific hostname
+  tls:
+    enabled: true
+    secretName: "securefin-staging-tls"
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+env:
+  PORT: "3000"
+  NODE_ENV: "staging"

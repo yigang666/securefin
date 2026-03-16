@@ -1,0 +1,78 @@
+{{/*
+  deployment.yaml — Kubernetes Deployment for SecureFin
+  Manages the rollout of the Node.js application pods.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Name is scoped to the Helm release so multiple installs can coexist.
+  name: {{ .Release.Name }}-securefin
+  labels:
+    app: securefin
+    release: {{ .Release.Name }}
+    chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  # Number of pod replicas — controlled by values.replicaCount.
+  replicas: {{ .Values.replicaCount }}
+
+  selector:
+    matchLabels:
+      app: securefin
+      release: {{ .Release.Name }}
+
+  # Rolling update strategy: replace pods one at a time so the service
+  # stays available during deployments.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  template:
+    metadata:
+      labels:
+        app: securefin
+        release: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: securefin
+          # Full image reference built from registry + tag in values.
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          ports:
+            # The container port the Express app listens on.
+            - containerPort: {{ .Values.service.targetPort }}
+
+          # Environment variables injected into the container at runtime.
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+
+          # Liveness probe — Kubernetes restarts the pod if this fails.
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.path }}
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+
+          # Readiness probe — Kubernetes stops routing traffic to the pod
+          # until this returns 200.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.path }}
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+
+          # CPU / memory resource constraints from values.
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}

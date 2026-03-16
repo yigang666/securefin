@@ -1,0 +1,27 @@
+{{/*
+  service.yaml — Kubernetes Service for SecureFin
+  Exposes the deployment pods as a stable network endpoint within the cluster.
+  The Ingress resource routes external traffic to this Service.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-securefin
+  labels:
+    app: securefin
+    release: {{ .Release.Name }}
+spec:
+  # ClusterIP (default) means the service is only reachable inside the cluster.
+  # External access is handled by the Ingress.
+  type: {{ .Values.service.type }}
+
+  selector:
+    # Forward traffic to pods that match these labels (set by the Deployment).
+    app: securefin
+    release: {{ .Release.Name }}
+
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.service.port }}           # service port (80)
+      targetPort: {{ .Values.service.targetPort }} # pod port (3000)

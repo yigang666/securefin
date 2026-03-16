@@ -1,0 +1,42 @@
+{{/*
+  ingress.yaml — Kubernetes Ingress for SecureFin
+  Routes external HTTP/HTTPS traffic to the SecureFin Service.
+  Rendered only when ingress.enabled is true in values.
+*/}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-securefin
+  labels:
+    app: securefin
+    release: {{ .Release.Name }}
+  annotations:
+    # Tell nginx to handle SSL termination and redirect HTTP → HTTPS.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  # Ingress class selects which Ingress controller handles this resource.
+  ingressClassName: {{ .Values.ingress.className }}
+
+  {{- if .Values.ingress.tls.enabled }}
+  # TLS configuration: maps the hostname to a Kubernetes Secret containing
+  # the TLS certificate and private key.
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # Must match the Service name defined in service.yaml.
+                name: {{ .Release.Name }}-securefin
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

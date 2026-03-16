@@ -1,0 +1,192 @@
+# ci-cd.yml — GitHub Actions CI/CD pipeline for SecureFin
+#
+# Pipeline stages:
+#   1. test    — install deps and run Jest tests (all branches)
+#   2. build   — build & push Docker image to GHCR (dev / staging / main)
+#   3. deploy  — helm upgrade to the matching Kubernetes environment
+#
+# Secrets required (set in GitHub repo Settings → Secrets → Actions):
+#   KUBECONFIG_DEV      — base64-encoded kubeconfig for the dev cluster/namespace
+#   KUBECONFIG_STAGING  — base64-encoded kubeconfig for the staging cluster/namespace
+#   KUBECONFIG_PROD     — base64-encoded kubeconfig for the prod cluster/namespace
+#   GHCR_TOKEN          — GitHub personal access token with packages:write scope
+
+name: CI/CD
+
+on:
+  # Run the full pipeline on every push to any of the three environment branches.
+  push:
+    branches:
+      - dev
+      - staging
+      - main
+  # Run tests only on PRs (no deploy) so reviewers see a green check.
+  pull_request:
+    branches:
+      - main
+      - staging
+
+# ── Environment variables shared across all jobs ──────────────────────────────
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/securefin
+
+jobs:
+  # ── Job 1: Test ──────────────────────────────────────────────────────────────
+  # Runs on every push and PR. Fails fast if any test fails so later jobs
+  # are never triggered with broken code.
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      # Check out the source code for this commit.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up the Node.js version matching our Dockerfile.
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # Cache node_modules between runs to speed up installs.
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      # Install all dependencies (including devDependencies for Jest).
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      # Run Jest tests. --forceExit ensures the process exits after tests.
+      - name: Run Jest tests
+        working-directory: app
+        run: npm test
+
+  # ── Job 2: Build & Push Docker image ─────────────────────────────────────────
+  # Only runs after tests pass, and only on direct pushes (not PRs).
+  build:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test   # wait for the test job to succeed
+    # Skip this job on pull_request events — we only deploy on branch pushes.
+    if: github.event_name == 'push'
+
+    # Expose the computed image tag to the deploy job.
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      short_sha: ${{ steps.short_sha.outputs.sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Compute a short git SHA for use as the image tag.
+      - name: Compute short SHA
+        id: short_sha
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      # Log in to GitHub Container Registry using the provided token.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      # Extract metadata (tags, labels) for the Docker image.
+      # Tags the image with both the short SHA and the branch name.
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+
+      # Build the image using the multi-stage Dockerfile and push to GHCR.
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache layers from the registry to speed up subsequent builds.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+  # ── Job 3: Deploy ─────────────────────────────────────────────────────────────
+  # Uses helm upgrade --install to deploy (or upgrade) the release.
+  # The target environment and values file are selected based on the branch name.
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build   # wait for the image to be pushed
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Select environment based on branch ────────────────────────────────────
+      # Sets three outputs:
+      #   env_name   — human label used in GitHub environment protection rules
+      #   values_file — Helm values override file for this environment
+      #   kubeconfig  — name of the GitHub secret holding the kubeconfig
+      - name: Resolve deployment environment
+        id: env
+        run: |
+          case "${{ github.ref_name }}" in
+            dev)
+              echo "env_name=dev"         >> $GITHUB_OUTPUT
+              echo "values_file=helm/values-dev.yaml" >> $GITHUB_OUTPUT
+              echo "kubeconfig=KUBECONFIG_DEV"         >> $GITHUB_OUTPUT
+              ;;
+            staging)
+              echo "env_name=staging"     >> $GITHUB_OUTPUT
+              echo "values_file=helm/values-staging.yaml" >> $GITHUB_OUTPUT
+              echo "kubeconfig=KUBECONFIG_STAGING"         >> $GITHUB_OUTPUT
+              ;;
+            main)
+              echo "env_name=production"  >> $GITHUB_OUTPUT
+              echo "values_file=helm/values.yaml" >> $GITHUB_OUTPUT
+              echo "kubeconfig=KUBECONFIG_PROD"    >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      # Decode and write the kubeconfig so kubectl / helm can authenticate.
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          # The secret is stored base64-encoded; decode it to a file.
+          echo "${{ secrets[steps.env.outputs.kubeconfig] }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      # Install Helm CLI.
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: "3.14.0"
+
+      # Deploy (or upgrade) the Helm release.
+      # --atomic: rolls back automatically if the deployment fails.
+      # --wait:   waits for pods to become ready before marking the step green.
+      - name: Helm deploy
+        run: |
+          helm upgrade --install securefin ./helm \
+            --namespace securefin-${{ steps.env.outputs.env_name }} \
+            --create-namespace \
+            -f ${{ steps.env.outputs.values_file }} \
+            --set image.tag=${{ needs.build.outputs.short_sha }} \
+            --atomic \
+            --wait \
+            --timeout 5m
+
+      # Post a deploy summary to the GitHub Actions step summary page.
+      - name: Print deploy summary
+        run: |
+          echo "## Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ steps.env.outputs.env_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image tag:** ${{ needs.build.outputs.short_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
