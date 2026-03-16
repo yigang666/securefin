@@ -1,0 +1,22 @@
+{
+  "branches": ["main"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    ["@semantic-release/changelog", {
+      "changelogFile": "CHANGELOG.md"
+    }],
+    ["@semantic-release/exec", {
+      "prepareCmd": "echo '${nextRelease.version}' > app/.version"
+    }],
+    ["@semantic-release/github", {
+      "assets": [
+        { "path": "sbom-*.spdx.json", "label": "SBOM (SPDX)" }
+      ]
+    }],
+    ["@semantic-release/git", {
+      "assets": ["CHANGELOG.md", "app/.version"],
+      "message": "chore(release): ${nextRelease.version} [skip ci]"
+    }]
+  ]
+}

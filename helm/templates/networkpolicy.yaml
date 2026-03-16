@@ -1,0 +1,48 @@
+{{/*
+  networkpolicy.yaml — Kubernetes NetworkPolicy
+  Implements a default-deny-all posture:
+    - Deny all ingress by default
+    - Allow ingress only from the nginx Ingress Controller namespace
+    - Deny all egress by default (pods cannot make arbitrary outbound calls)
+  This limits blast radius if a pod is compromised.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-securefin
+  labels:
+    app: securefin
+    release: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: securefin
+      release: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow traffic from the nginx Ingress Controller pods only.
+    # The ingress-nginx namespace must have the label below applied.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.targetPort }}
+
+  egress:
+    # Allow DNS resolution (CoreDNS lives on port 53 in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

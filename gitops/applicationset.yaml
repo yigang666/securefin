@@ -1,0 +1,67 @@
+# gitops/applicationset.yaml — ArgoCD ApplicationSet
+#
+# Defines all three SecureFin environments as a single ApplicationSet.
+# ArgoCD continuously reconciles the cluster state against this Git repository.
+# Any drift (manual kubectl edits) is automatically corrected.
+#
+# Deploy with:
+#   kubectl apply -f gitops/applicationset.yaml -n argocd
+
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: securefin
+  namespace: argocd
+spec:
+  generators:
+    # List generator: one entry per environment
+    - list:
+        elements:
+          - env:        dev
+            branch:     dev
+            namespace:  securefin-dev
+            valuesFile: helm/values-dev.yaml
+            autoSync:   "true"     # auto-sync in dev (deploy on every push)
+            selfHeal:   "false"    # allow manual kubectl edits in dev
+
+          - env:        staging
+            branch:     staging
+            namespace:  securefin-staging
+            valuesFile: helm/values-staging.yaml
+            autoSync:   "true"
+            selfHeal:   "true"     # auto-heal drift in staging
+
+          - env:        prod
+            branch:     main
+            namespace:  securefin-prod
+            valuesFile: helm/values.yaml
+            autoSync:   "false"    # production requires manual sync trigger
+            selfHeal:   "true"     # but auto-heal drift once deployed
+
+  template:
+    metadata:
+      name: "securefin-{{ env }}"
+      labels:
+        app: securefin
+        env: "{{ env }}"
+    spec:
+      project: default
+
+      source:
+        repoURL: https://github.com/your-org/securefin
+        targetRevision: "{{ branch }}"
+        helm:
+          valueFiles:
+            - "{{ valuesFile }}"
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ namespace }}"
+
+      syncPolicy:
+        automated:
+          prune: true               # remove resources deleted from Git
+          selfHeal: "{{ selfHeal }}"
+        syncOptions:
+          - CreateNamespace=true    # create namespace if it doesn't exist
+          - ServerSideApply=true    # use server-side apply for cleaner diffs

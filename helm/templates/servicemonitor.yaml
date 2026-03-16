@@ -1,0 +1,31 @@
+{{/*
+  servicemonitor.yaml — Prometheus Operator ServiceMonitor
+  Tells the Prometheus Operator to scrape the /metrics endpoint on this service.
+  Requires the Prometheus Operator CRDs to be installed in the cluster.
+  Only rendered when metrics.serviceMonitor.enabled is true.
+*/}}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-securefin
+  labels:
+    app: securefin
+    release: {{ .Release.Name }}
+    # This label must match the Prometheus Operator's serviceMonitorSelector.
+    # Adjust to match your Prometheus installation.
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: securefin
+      release: {{ .Release.Name }}
+  endpoints:
+    - port: http                   # matches the service port name
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+{{- end }}

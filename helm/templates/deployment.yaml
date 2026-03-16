@@ -1,74 +1,113 @@
 {{/*
   deployment.yaml — Kubernetes Deployment for SecureFin
   Manages the rollout of the Node.js application pods.
+  Includes:
+    - SecurityContext (hardened: non-root, read-only fs, no privilege escalation)
+    - Pod anti-affinity (spreads pods across nodes for HA)
+    - Dedicated ServiceAccount with no API token
+    - Resource limits and requests
+    - Liveness + readiness probes
 */}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  # Name is scoped to the Helm release so multiple installs can coexist.
   name: {{ .Release.Name }}-securefin
   labels:
     app: securefin
     release: {{ .Release.Name }}
     chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 spec:
-  # Number of pod replicas — controlled by values.replicaCount.
+  {{- if not .Values.autoscaling.enabled }}
+  # When HPA is enabled, it manages replica count — do not set it here.
   replicas: {{ .Values.replicaCount }}
-
+  {{- end }}
   selector:
     matchLabels:
       app: securefin
       release: {{ .Release.Name }}
-
-  # Rolling update strategy: replace pods one at a time so the service
-  # stays available during deployments.
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 1
       maxSurge: 1
-
   template:
     metadata:
       labels:
         app: securefin
         release: {{ .Release.Name }}
+      annotations:
+        # Force pod restart when values change (e.g. config updates)
+        checksum/values: {{ .Values | toYaml | sha256sum }}
     spec:
+      # Use dedicated ServiceAccount with no auto-mounted token
+      serviceAccountName: {{ .Release.Name }}-securefin
+      automountServiceAccountToken: false
+
+      # Pod-level security: run as non-root, use RuntimeDefault seccomp profile
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Prefer scheduling pods on different nodes for HA
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: securefin
+
       containers:
         - name: securefin
-          # Full image reference built from registry + tag in values.
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
 
           ports:
-            # The container port the Express app listens on.
-            - containerPort: {{ .Values.service.targetPort }}
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
 
-          # Environment variables injected into the container at runtime.
+          # Container-level security hardening
+          securityContext:
+            allowPrivilegeEscalation: false   # prevent sudo/setuid escalation
+            readOnlyRootFilesystem: true       # filesystem is immutable at runtime
+            capabilities:
+              drop: ["ALL"]                    # drop all Linux capabilities
+
           env:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
 
-          # Liveness probe — Kubernetes restarts the pod if this fails.
+          # Writable temp dir for pino-pretty and other runtime temp files
+          # readOnlyRootFilesystem: true requires explicit emptyDir mounts for writes
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
           livenessProbe:
             httpGet:
               path: {{ .Values.livenessProbe.path }}
-              port: {{ .Values.service.targetPort }}
+              port: http
             initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            failureThreshold: 3
 
-          # Readiness probe — Kubernetes stops routing traffic to the pod
-          # until this returns 200.
           readinessProbe:
             httpGet:
               path: {{ .Values.readinessProbe.path }}
-              port: {{ .Values.service.targetPort }}
+              port: http
             initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            failureThreshold: 3
 
-          # CPU / memory resource constraints from values.
           resources:
             requests:
               cpu: {{ .Values.resources.requests.cpu }}
@@ -76,3 +115,8 @@ spec:
             limits:
               cpu: {{ .Values.resources.limits.cpu }}
               memory: {{ .Values.resources.limits.memory }}
+
+      volumes:
+        # Writable scratch space — required when readOnlyRootFilesystem: true
+        - name: tmp
+          emptyDir: {}

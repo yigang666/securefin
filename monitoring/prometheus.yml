@@ -1,0 +1,9 @@
+# prometheus.yml — local Prometheus scrape config for docker-compose
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: securefin
+    static_configs:
+      - targets: ['api:3000']
+    metrics_path: /metrics

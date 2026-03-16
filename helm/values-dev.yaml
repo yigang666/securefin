@@ -1,19 +1,20 @@
 # values-dev.yaml — development environment overrides
-# Apply with: helm upgrade --install securefin ./helm -f helm/values-dev.yaml
-# Only the keys that differ from values.yaml need to be listed here.
-
-# Fewer replicas in dev — saves cluster resources.
 replicaCount: 1
 
+autoscaling:
+  enabled: false   # fixed replica count in dev
+
+podDisruptionBudget:
+  minAvailable: 0   # allow full disruption in dev
+
 image:
-  tag: "dev-latest"   # built from the dev branch
+  tag: "dev-latest"
 
 ingress:
-  host: "securefin-dev.example.com"   # dev-specific hostname
+  host: "securefin-dev.example.com"
   tls:
-    enabled: false   # TLS not required in dev to simplify setup
+    enabled: false
 
-# Relaxed resource limits for dev machines / small clusters.
 resources:
   requests:
     cpu: "50m"
@@ -25,3 +26,13 @@ resources:
 env:
   PORT: "3000"
   NODE_ENV: "development"
+  LOG_LEVEL: "debug"
+
+networkPolicy:
+  enabled: false   # relaxed in dev for easier debugging
+
+metrics:
+  serviceMonitor:
+    enabled: false
+  grafanaDashboard:
+    enabled: false

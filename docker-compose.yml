@@ -1,0 +1,49 @@
+# docker-compose.yml — Local development stack
+# Runs the API with hot-reload and a Prometheus + Grafana sidecar for
+# testing observability locally.
+#
+# Usage:
+#   make compose-up        # start everything
+#   make compose-down      # stop everything
+
+services:
+  api:
+    build:
+      context: ./app
+      target: deps   # use the deps stage so devDependencies are available
+    command: ["node", "node_modules/.bin/nodemon", "server.js"]
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      LOG_LEVEL: debug
+    volumes:
+      - ./app:/app
+      - /app/node_modules   # anonymous volume prevents host node_modules from overriding
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus

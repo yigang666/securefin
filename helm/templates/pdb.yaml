@@ -1,0 +1,22 @@
+{{/*
+  pdb.yaml — PodDisruptionBudget
+  Guarantees that at least minAvailable pods remain running during voluntary
+  disruptions: node drains, rolling updates, cluster upgrades.
+  Without this, a node drain could take all pods offline simultaneously.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-securefin
+  labels:
+    app: securefin
+    release: {{ .Release.Name }}
+spec:
+  # At least 1 pod must always be available during disruptions.
+  # For single-replica dev deployments this effectively means no voluntary disruption
+  # is allowed — that is acceptable for dev.
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: securefin
+      release: {{ .Release.Name }}
